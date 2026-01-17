@@ -5,8 +5,8 @@
   "type": "module",
   "main": "index.js",
   "engines": {
-    "node": "18.x",
-    "npm": "10.x"
+    "node": "18.20.4",
+    "npm": "10.8.2"
   },
   "scripts": {
     "start": "node index.js",
@@ -54,5 +54,8 @@
     "nodemon": "^3.1.7"
   },
   "author": "GuruTech",
-  "license": "ISC"
+  "license": "ISC",
+  "overrides": {
+    "file-type": "^18.7.0"
+  }
 }
