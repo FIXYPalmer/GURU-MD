@@ -58,4 +58,4 @@ To help us understand and resolve the issue quickly, please include as much of t
 Thank you for helping keep **GURU MD** secure!
 
 © 2025–2026 GURU MD – Created by GuruTech  
-https://github.com/itsguruu/GURU
+https://github.com/itsguruu/GURU-MD
