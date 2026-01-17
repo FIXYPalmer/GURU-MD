@@ -29,7 +29,7 @@ Please send your report to one of the following trusted contacts:
 
 - **Alternative contact:**  
   Open a private issue on GitHub:  
-  https://github.com/itsguruu/GURU/security/advisories/new
+  https://github.com/itsguruu/GURU-MD/security/advisories/new
 
 ### What to Include in Your Report
 
