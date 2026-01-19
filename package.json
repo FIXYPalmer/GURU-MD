@@ -5,8 +5,7 @@
   "type": "module",
   "main": "index.js",
   "engines": {
-    "node": "20.x",
-    "npm": "10.x"
+    "node": "20.x"
   },
   "scripts": {
     "start": "node index.js",
@@ -51,7 +50,7 @@
     "mrnima-moviedl": "1.0.0",
     "ruhend-scraper": "^9.0.8",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
-    "pdfkit": "^0.15.0"   
+    "pdfkit": "^0.15.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.7"
