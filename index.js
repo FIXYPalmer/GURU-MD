@@ -5,125 +5,104 @@ const AdmZip = require("adm-zip");
 const { spawn } = require("child_process");
 const chalk = require("chalk");
 
-// TEMP DIRECTORY
-const TEMP_DIR = path.join(__dirname, ".guruh-temp");
+// TEMP DIR (small name to save bytes)
+const TEMP = path.join(__dirname, ".tmp");
 
-// GIT CONFIG
-const DOWNLOAD_URL = "https://github.com/itsguruu/GURUH/archive/refs/heads/main.zip";
-const EXTRACT_DIR = path.join(TEMP_DIR, "GURUH-main");
-const LOCAL_SETTINGS = path.join(__dirname, "config.js");
-const EXTRACTED_SETTINGS = path.join(EXTRACT_DIR, "config.js");
+// CONFIG
+const ZIP_URL = "https://github.com/itsguruu/GURUH/archive/refs/heads/main.zip";
+const EXTRACT = path.join(TEMP, "GURUH-main");
+const LOCAL_CFG = path.join(__dirname, "config.js");
+const TARGET_CFG = path.join(EXTRACT, "config.js");
 
 // HELPERS
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+const wait = ms => new Promise(r => setTimeout(r, ms));
 
-// MAIN LOGIC ── DOWNLOAD + EXTRACT
-async function downloadAndExtract() {
+// CLEAN + DOWNLOAD + EXTRACT (minimal logging)
+async function fetchRepo() {
   try {
-    if (fs.existsSync(TEMP_DIR)) {
-      console.log(chalk.yellow("Cleaning cache..."));
-      fs.rmSync(TEMP_DIR, { recursive: true, force: true });
-    }
+    if (fs.existsSync(TEMP)) fs.rmSync(TEMP, { recursive: true, force: true });
+    fs.mkdirSync(TEMP, { recursive: true });
 
-    fs.mkdirSync(TEMP_DIR, { recursive: true });
+    const zipFile = path.join(TEMP, "r.zip");
+    const res = await axios({ url: ZIP_URL, method: "GET", responseType: "stream", timeout: 45000 });
 
-    const zipPath = path.join(TEMP_DIR, "guruh.zip");
-    console.log(chalk.blue("Downloading repo..."));
-
-    const response = await axios({
-      url: DOWNLOAD_URL,
-      method: "GET",
-      responseType: "stream",
-      timeout: 60000,
+    await new Promise((res, rej) => {
+      const w = fs.createWriteStream(zipFile);
+      res.data.pipe(w);
+      w.on("finish", res);
+      w.on("error", rej);
     });
 
-    await new Promise((resolve, reject) => {
-      const writer = fs.createWriteStream(zipPath);
-      response.data.pipe(writer);
-      writer.on("finish", resolve);
-      writer.on("error", reject);
-    });
+    const zip = new AdmZip(zipFile);
+    zip.extractAllTo(TEMP, true);
 
-    console.log(chalk.green("Download complete."));
-
-    const zip = new AdmZip(zipPath);
-    zip.extractAllTo(TEMP_DIR, true);
-    console.log(chalk.green("Extraction complete."));
-
-    if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
-  } catch (err) {
-    console.error(chalk.red("Download/Extract failed:"), err.message);
-    throw err;
-  }
-}
-
-// APPLY LOCAL CONFIG
-async function applyLocalSettings() {
-  if (!fs.existsSync(LOCAL_SETTINGS)) {
-    console.log(chalk.yellow("No local config.js → skipping."));
-    return;
-  }
-
-  try {
-    fs.mkdirSync(EXTRACT_DIR, { recursive: true });
-    fs.copyFileSync(LOCAL_SETTINGS, EXTRACTED_SETTINGS);
-    console.log(chalk.green("Local config applied."));
-  } catch (err) {
-    console.error(chalk.red("Config apply failed:"), err.message);
-  }
-
-  await delay(400);
-}
-
-// START BOT
-function startBot() {
-  console.log(chalk.cyan("Launching bot..."));
-
-  if (!fs.existsSync(EXTRACT_DIR)) {
-    console.error(chalk.red("Extracted folder missing."));
-    return;
-  }
-
-  const original = path.join(EXTRACT_DIR, "index.js");
-  const cjsEntry = path.join(EXTRACT_DIR, "index.cjs");
-
-  if (!fs.existsSync(original)) {
-    console.error(chalk.red("index.js not found in downloaded repo."));
-    return;
-  }
-
-  // Only rename the entry point
-  fs.renameSync(original, cjsEntry);
-  console.log(chalk.yellow("Entry point renamed to index.cjs"));
-
-  // Give Node a moment for GC
-  setTimeout(() => {
-    const bot = spawn("node", [cjsEntry], {
-      cwd: EXTRACT_DIR,
-      stdio: "inherit",
-      env: { ...process.env, NODE_ENV: "production" },
-    });
-
-    bot.on("close", (code) => {
-      console.log(chalk.red(`Bot exited with code ${code}`));
-      process.exit(code);  // <--- CRITICAL: downloader dies here → frees memory
-    });
-
-    bot.on("error", (err) => {
-      console.error(chalk.red("Spawn failed:"), err.message);
-      process.exit(1);
-    });
-  }, 500);
-}
-
-// RUN EVERYTHING
-(async () => {
-  try {
-    await downloadAndExtract();
-    await applyLocalSettings();
-    startBot();
-  } catch (err) {
-    console.error(chalk.red("Fatal error:"), err.message);
+    fs.unlinkSync(zipFile);
+  } catch (e) {
+    console.error("Fetch failed:", e.message);
     process.exit(1);
   }
+}
+
+// REMOVE "type": "module" + RENAME ALL .js → .cjs
+function makeCommonJS() {
+  const pkg = path.join(EXTRACT, "package.json");
+  if (fs.existsSync(pkg)) {
+    let data = JSON.parse(fs.readFileSync(pkg, "utf8"));
+    if (data.type === "module") {
+      delete data.type;
+      fs.writeFileSync(pkg, JSON.stringify(data, null, 2));
+      console.log("Removed type:module");
+    }
+  }
+
+  // Rename every .js to .cjs (recursive)
+  function ren(dir) {
+    fs.readdirSync(dir, { withFileTypes: true }).forEach(e => {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) return ren(p);
+      if (e.name.endsWith(".js")) {
+        fs.renameSync(p, p.replace(/\.js$/, ".cjs"));
+      }
+    });
+  }
+  ren(EXTRACT);
+  console.log("Renamed all .js → .cjs");
+}
+
+// APPLY CONFIG + SPAWN + EXIT
+function launch() {
+  if (!fs.existsSync(EXTRACT)) return console.error("No extract dir");
+
+  if (fs.existsSync(LOCAL_CFG)) {
+    fs.copyFileSync(LOCAL_CFG, TARGET_CFG);
+    console.log("Config applied");
+  }
+
+  const entry = path.join(EXTRACT, "index.cjs");
+  if (!fs.existsSync(entry)) return console.error("No index.cjs");
+
+  console.log("Spawning bot...");
+
+  const child = spawn("node", [entry], {
+    cwd: EXTRACT,
+    stdio: "inherit",
+    env: { ...process.env, NODE_ENV: "production" }
+  });
+
+  child.on("close", code => {
+    console.log(`Bot exited code ${code}`);
+    process.exit(code);  // DOWNLOADER DIES → frees memory
+  });
+
+  child.on("error", e => {
+    console.error("Spawn error:", e.message);
+    process.exit(1);
+  });
+}
+
+// MAIN
+(async () => {
+  await fetchRepo();
+  makeCommonJS();
+  launch();
 })();
