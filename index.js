@@ -1,3 +1,7 @@
+// === Memory Optimization - Safe for all hosts ===
+process.env.NODE_OPTIONS = '--max-old-space-size=384';
+process.env.BAILEYS_MEMORY_OPTIMIZED = 'true';
+
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
@@ -8,7 +12,7 @@ const chalk = require("chalk");
 // TEMP DIR
 const TEMP = path.join(__dirname, ".tmp");
 
-// CONFIG - CHANGE THIS IF THE REPO MOVED
+// CONFIG
 const ZIP_URL = "https://github.com/itsguruu/GURUH/archive/refs/heads/main.zip";
 const EXTRACT = path.join(TEMP, "GURUH-main");
 const LOCAL_CFG = path.join(__dirname, "config.js");
@@ -33,9 +37,9 @@ async function fetchRepo() {
     const response = await axios({
       url: ZIP_URL,
       method: "GET",
-      responseType: "arraybuffer", // safer than stream for error detection
+      responseType: "arraybuffer",
       timeout: 60000,
-      validateStatus: status => status < 500, // accept 4xx to log them
+      validateStatus: status => status < 500,
     });
 
     if (response.status !== 200) {
@@ -60,7 +64,7 @@ async function fetchRepo() {
   }
 }
 
-// MAKE COMMONJS + SPAWN
+// MAKE COMMONJS + PATCH TOP-LEVEL AWAIT + SPAWN
 function launch() {
   if (!fs.existsSync(EXTRACT)) {
     console.error(chalk.red("No extracted folder."));
@@ -84,7 +88,26 @@ function launch() {
 
   if (fs.existsSync(original)) {
     fs.renameSync(original, cjsEntry);
-    console.log(chalk.yellow("Renamed entry to .cjs"));
+    console.log(chalk.yellow("Entry point renamed to index.cjs"));
+
+    // === PATCH TOP-LEVEL AWAIT (Option 2 fix) ===
+    let content = fs.readFileSync(cjsEntry, "utf8");
+
+    // Wrap the entire pairing block in async IIFE
+    // This targets the common pattern: const phoneNumber = await ...
+    // We wrap from the first await to the end of the pairing logic
+    content = content.replace(
+      /(const phoneNumber = await new Promise[\s\S]*?rl\.close\(\);)/,
+      '(async () => {\n$1\n})();'
+    );
+
+    // Fallback: if the above regex misses, force wrap any top-level await
+    if (content.includes('await ') && !content.includes('(async () => {')) {
+      content = '(async () => {\n' + content + '\n})();';
+    }
+
+    fs.writeFileSync(cjsEntry, content);
+    console.log(chalk.yellow("Patched top-level await in index.cjs"));
   } else {
     console.error(chalk.red("No index.js found."));
     process.exit(1);
@@ -106,7 +129,7 @@ function launch() {
 
   child.on("close", code => {
     console.log(`Bot exited with code ${code}`);
-    process.exit(code); // downloader exits — frees memory
+    process.exit(code); // downloader dies → frees memory
   });
 
   child.on("error", e => {
@@ -115,8 +138,15 @@ function launch() {
   });
 }
 
-// RUN
+// MAIN
 (async () => {
   await fetchRepo();
   launch();
 })();
+
+// Required web server for Heroku
+const express = require("express");
+const app = express();
+app.get("/", (req, res) => res.send("GURU MD is running"));
+const port = process.env.PORT || 3000;
+app.listen(port, () => console.log(chalk.blue(`Web server on port ${port}`)));
