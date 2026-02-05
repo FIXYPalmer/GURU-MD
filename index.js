@@ -17,6 +17,33 @@ const EXTRACTED_SETTINGS = path.join(EXTRACT_DIR, "config.js");
 // === HELPERS ===
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// === RECURSIVELY RENAME ALL .js → .cjs ===
+function renameJsToCjs(dir) {
+  fs.readdirSync(dir, { withFileTypes: true }).forEach(entry => {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      renameJsToCjs(fullPath);
+    } else if (entry.name.endsWith(".js")) {
+      const newPath = fullPath.replace(/\.js$/, ".cjs");
+      fs.renameSync(fullPath, newPath);
+      console.log(chalk.dim(`Renamed: ${entry.name} → ${path.basename(newPath)}`));
+    }
+  });
+}
+
+// === FIX require('./something.js') → require('./something.cjs') in a file ===
+function fixRequiresInFile(filePath) {
+  if (!fs.existsSync(filePath)) return;
+  let content = fs.readFileSync(filePath, "utf8");
+  // Simple regex replace - looks for require('./...js') or require("../...js")
+  content = content.replace(
+    /require\(['"]([\.\/]+[^'"]+\.js)['"]\)/g,
+    (match, p1) => `require('\( {p1.replace(/\.js \)/, ".cjs")}')`
+  );
+  fs.writeFileSync(filePath, content, "utf8");
+  console.log(chalk.dim(`Fixed requires in: ${path.basename(filePath)}`));
+}
+
 // === MAIN LOGIC ===
 async function downloadAndExtract() {
   try {
@@ -52,12 +79,29 @@ async function downloadAndExtract() {
 
     if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-    const pluginFolder = path.join(EXTRACT_DIR, "plugins");
-    console.log(
-      fs.existsSync(pluginFolder)
-        ? chalk.green("✅ Plugins folder found.")
-        : chalk.yellow("⚠️ Plugins folder not found.")
-    );
+    // Remove "type": "module" from package.json
+    const pkgPath = path.join(EXTRACT_DIR, "package.json");
+    if (fs.existsSync(pkgPath)) {
+      let pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+      if (pkg.type === "module") {
+        delete pkg.type;
+        fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+        console.log(chalk.yellow("Removed 'type: module' from package.json → forcing CommonJS"));
+      }
+    }
+
+    // Rename EVERY .js → .cjs in the entire extracted folder
+    renameJsToCjs(EXTRACT_DIR);
+    console.log(chalk.yellow("All .js files renamed to .cjs"));
+
+    // Fix require paths in the main index.cjs
+    const entryPoint = path.join(EXTRACT_DIR, "index.cjs");
+    if (fs.existsSync(entryPoint)) {
+      fixRequiresInFile(entryPoint);
+    }
+
+    // Optionally fix other important files (e.g. command loader, lib files)
+    // You can add more paths here if needed
   } catch (err) {
     console.error(chalk.red("❌ Download/Extract failed:"), err.message);
     throw err;
@@ -89,17 +133,12 @@ function startBot() {
     return;
   }
 
-  const originalEntry = path.join(EXTRACT_DIR, "index.js");
   const commonJsEntry = path.join(EXTRACT_DIR, "index.cjs");
 
-  if (!fs.existsSync(originalEntry)) {
-    console.error(chalk.red("❌ index.js not found in extracted folder."));
+  if (!fs.existsSync(commonJsEntry)) {
+    console.error(chalk.red("❌ index.cjs not found after renaming."));
     return;
   }
-
-  // Rename to .cjs to force CommonJS mode (bypasses "type": "module")
-  fs.renameSync(originalEntry, commonJsEntry);
-  console.log(chalk.yellow("Renamed index.js → index.cjs to force CommonJS"));
 
   const bot = spawn("node", [commonJsEntry], {
     cwd: EXTRACT_DIR,
